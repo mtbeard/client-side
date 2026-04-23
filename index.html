@@ -1,0 +1,1257 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Stealth-LSB Vault</title>
+
+  <!-- ─── Tailwind CSS (Play CDN) ───────────────────────────────────── -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: { gray: { 950: '#060b14' } },
+          fontFamily: { mono: ['"Courier New"', 'Courier', 'monospace'] }
+        }
+      }
+    }
+  </script>
+
+  <!-- ─── Vue 3 Global Build ────────────────────────────────────────── -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    body { font-family: 'Courier New', Courier, monospace; }
+
+    /* Subtle scanline overlay for forensic feel */
+    body::before {
+      content: '';
+      position: fixed; inset: 0; pointer-events: none; z-index: 9999;
+      background: repeating-linear-gradient(
+        0deg, transparent, transparent 2px,
+        rgba(16,185,129,0.018) 2px, rgba(16,185,129,0.018) 4px
+      );
+    }
+
+    /* Drop zone hover transition */
+    .drop-zone { transition: border-color .2s ease, background .2s ease; }
+    .drop-zone.drag-active {
+      border-color: #10b981 !important;
+      background: rgba(16,185,129,0.07);
+    }
+
+    /* Capacity bar smooth fill */
+    .cap-bar { transition: width .4s ease, background-color .4s ease; }
+
+    /* Toast slide-in from right */
+    .toast-enter-active,
+    .toast-leave-active { transition: all .3s ease; }
+    .toast-enter-from   { transform: translateX(110%); opacity: 0; }
+    .toast-leave-to     { transform: translateX(110%); opacity: 0; }
+
+    /* Mode toggle sliding pill */
+    .mode-pill { transition: left .25s ease, background .25s ease; }
+
+    /* Processing pulse */
+    @keyframes proc-pulse { 0%,100%{opacity:1} 50%{opacity:.6} }
+    .proc-pulse { animation: proc-pulse 1.2s ease-in-out infinite; }
+
+    /* Scrollbar styling */
+    ::-webkit-scrollbar { width: 5px; }
+    ::-webkit-scrollbar-track { background: #111827; }
+    ::-webkit-scrollbar-thumb { background: #374151; border-radius: 3px; }
+  </style>
+</head>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     Tailwind safelist: classes used dynamically via :class bindings
+     The Play CDN scans static HTML — this hidden div ensures they compile.
+════════════════════════════════════════════════════════════════════════ -->
+<body class="bg-gray-950 text-gray-100 min-h-screen dark">
+<div class="hidden"
+     data-tw-safelist="
+       bg-emerald-500 bg-emerald-600 bg-red-500 bg-red-600 bg-yellow-500 bg-yellow-600
+       bg-cyan-500 bg-cyan-600 border-emerald-400 border-emerald-500/40 border-cyan-400
+       border-cyan-500/40 border-red-400 border-yellow-500/30 text-emerald-400 text-red-400
+       text-yellow-300 text-cyan-400 text-emerald-300 text-red-300 text-cyan-300
+       bg-emerald-500/10 bg-emerald-500/20 bg-red-500/10 bg-cyan-500/10 bg-cyan-500/20
+       bg-yellow-500/10 bg-gray-800/90 shadow-emerald-500/20 shadow-cyan-500/20
+       from-emerald-500 to-emerald-600 from-cyan-500 to-cyan-600
+       ring-emerald-500 ring-red-500 ring-cyan-500
+     ">
+</div>
+
+<!-- ══════════════════════════════════════════════════════════════════════
+     Vue 3 Application Root
+════════════════════════════════════════════════════════════════════════ -->
+<div id="app" class="min-h-screen flex flex-col">
+
+  <!-- ╔══════════════════ HEADER ══════════════════════════════════════╗ -->
+  <header class="border-b border-gray-800 bg-gray-900/80 backdrop-blur-sm px-5 py-3 flex items-center justify-between sticky top-0 z-40">
+    <div class="flex items-center gap-3">
+      <div class="w-9 h-9 rounded-lg bg-emerald-500/10 border border-emerald-500/30 flex items-center justify-center text-lg select-none">🔒</div>
+      <div>
+        <h1 class="text-base font-bold tracking-[0.2em] text-emerald-400 leading-none">STEALTH-LSB VAULT</h1>
+        <p class="text-[10px] text-gray-600 tracking-widest mt-0.5">AES-256-GCM · PBKDF2-SHA256 · LSB STEGANOGRAPHY</p>
+      </div>
+    </div>
+    <div class="flex items-center gap-2 text-[10px] text-gray-700 tracking-wider">
+      <span class="w-1.5 h-1.5 rounded-full bg-emerald-500 animate-pulse"></span>
+      LOCAL ONLY · ZERO BACKEND
+    </div>
+  </header>
+
+  <!-- ╔══════════════════ MODE TOGGLE ═════════════════════════════════╗ -->
+  <div class="flex justify-center px-4 pt-6 pb-4">
+    <div class="relative bg-gray-900 border border-gray-700 rounded-xl p-1 flex w-full max-w-md">
+      <!-- Animated sliding pill -->
+      <div class="mode-pill absolute top-1 bottom-1 w-[calc(50%-4px)] rounded-lg"
+           :class="mode === 'encode'
+             ? 'left-1 bg-emerald-500/15 border border-emerald-500/40'
+             : 'left-[calc(50%+4px)] bg-cyan-500/15 border border-cyan-500/40'">
+      </div>
+      <button @click="switchMode('encode')"
+              class="relative z-10 flex-1 py-3 rounded-lg text-xs font-bold tracking-[0.15em] uppercase flex items-center justify-center gap-2 transition-colors duration-200"
+              :class="mode === 'encode' ? 'text-emerald-400' : 'text-gray-600 hover:text-gray-400'">
+        ⬆ ENCODE
+      </button>
+      <button @click="switchMode('decode')"
+              class="relative z-10 flex-1 py-3 rounded-lg text-xs font-bold tracking-[0.15em] uppercase flex items-center justify-center gap-2 transition-colors duration-200"
+              :class="mode === 'decode' ? 'text-cyan-400' : 'text-gray-600 hover:text-gray-400'">
+        ⬇ DECODE
+      </button>
+    </div>
+  </div>
+
+  <!-- ╔══════════════════ MAIN CONTENT ════════════════════════════════╗ -->
+  <main class="flex-1 px-4 pb-6 max-w-5xl mx-auto w-full">
+    <div class="grid grid-cols-1 lg:grid-cols-2 gap-4">
+
+      <!-- ══════ LEFT COLUMN — IMAGE ZONE ══════ -->
+      <div class="space-y-3">
+        <div class="flex items-center gap-2 text-[10px] text-gray-600 uppercase tracking-[0.18em]">
+          <span :class="mode === 'encode' ? 'text-emerald-600' : 'text-cyan-600'">◈</span>
+          COVER IMAGE
+          <span class="ml-auto font-bold" v-if="imgInfo">{{ imgInfo.width }}×{{ imgInfo.height }}</span>
+        </div>
+
+        <!-- Drop Zone -->
+        <div class="drop-zone relative border-2 border-dashed rounded-xl cursor-pointer overflow-hidden flex flex-col items-center justify-center"
+             :class="[
+               isDragOver ? 'drag-active' : 'border-gray-700 hover:border-gray-600',
+               imgInfo ? 'min-h-48' : 'min-h-56'
+             ]"
+             @dragover.prevent="isDragOver = true"
+             @dragleave.prevent="isDragOver = false"
+             @drop.prevent="onImageDrop"
+             @click="$refs.imgInput.click()">
+
+          <!-- Blurred thumbnail preview -->
+          <img v-if="imgInfo"
+               :src="imgInfo.src"
+               class="absolute inset-0 w-full h-full object-contain opacity-25 pointer-events-none"
+               alt="preview" />
+
+          <!-- Empty state -->
+          <div v-if="!imgInfo" class="text-center px-6 select-none">
+            <div class="text-5xl mb-3 opacity-30">🖼️</div>
+            <p class="text-gray-400 text-sm font-bold">Drag &amp; Drop Image</p>
+            <p class="text-gray-700 text-xs mt-1">or click to browse</p>
+            <p class="text-gray-800 text-xs mt-3 tracking-widest">PNG · JPG · WEBP · BMP</p>
+          </div>
+
+          <!-- Loaded state info badge -->
+          <div v-else class="relative z-10 text-center px-4">
+            <div class="bg-gray-900/85 backdrop-blur-sm rounded-lg px-4 py-2.5 border border-gray-700/80 shadow-xl">
+              <p class="text-emerald-400 text-xs font-bold truncate max-w-xs">{{ imgInfo.name }}</p>
+              <p class="text-gray-400 text-xs mt-0.5">{{ imgInfo.width }}×{{ imgInfo.height }} · {{ fmtBytes(imgInfo.fileSize) }}</p>
+              <p class="text-gray-700 text-[10px] mt-1">Click or drop to replace</p>
+            </div>
+          </div>
+
+          <!-- JPEG warning (decode mode) -->
+          <div v-if="mode === 'decode' && imgInfo && !imgInfo.isPng"
+               class="absolute bottom-0 left-0 right-0 bg-yellow-500/10 border-t border-yellow-500/30 text-yellow-300 text-[10px] tracking-wider px-3 py-2 text-center z-20">
+            ⚠ Non-PNG detected — lossy compression may have destroyed LSB data
+          </div>
+        </div>
+        <input ref="imgInput" type="file" accept="image/*" class="hidden" @change="onImageInputChange" />
+
+        <!-- Capacity Monitor -->
+        <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+          <div class="flex justify-between text-[10px] text-gray-600 uppercase tracking-widest mb-2">
+            <span>Capacity Monitor</span>
+            <span :class="capacityOverflow ? 'text-red-400 font-bold' : 'text-gray-500'">
+              <template v-if="imgInfo">
+                {{ fmtBytes(estimatedSize) }} / {{ fmtBytes(capacityBytes) }}
+                <span v-if="capacityOverflow"> ✗ OVERFLOW</span>
+              </template>
+              <template v-else>— load an image —</template>
+            </span>
+          </div>
+          <div class="h-2 bg-gray-800 rounded-full overflow-hidden">
+            <div class="h-full rounded-full cap-bar"
+                 :class="capacityOverflow ? 'bg-red-500' : capacityPct > 80 ? 'bg-yellow-500' : 'bg-emerald-500'"
+                 :style="{ width: (imgInfo ? Math.min(100, capacityPct) : 0) + '%' }">
+            </div>
+          </div>
+          <div class="flex justify-between text-[10px] text-gray-700 mt-1.5">
+            <span>{{ imgInfo ? capacityPct + '% used' : 'Awaiting image' }}</span>
+            <span>{{ imgInfo ? 'Max ' + fmtBytes(capacityBytes) : 'W × H × 3 / 8 bytes' }}</span>
+          </div>
+        </div>
+      </div>
+      <!-- ══ END LEFT ══ -->
+
+      <!-- ══════ RIGHT COLUMN — PAYLOAD / RESULT ══════ -->
+      <div class="space-y-3">
+
+        <!-- ─── ENCODE: Payload panel ─── -->
+        <template v-if="mode === 'encode'">
+          <div class="flex items-center gap-2 text-[10px] text-gray-600 uppercase tracking-[0.18em]">
+            <span class="text-emerald-600">◈</span>
+            SECRET PAYLOAD
+            <span class="ml-auto text-gray-700" v-if="rawPayloadSize > 0">{{ fmtBytes(rawPayloadSize) }}</span>
+          </div>
+
+          <div class="bg-gray-900 border border-gray-800 rounded-xl overflow-hidden">
+            <!-- Tab bar -->
+            <div class="flex border-b border-gray-800">
+              <button @click="payloadTab = 'text'"
+                      class="flex-1 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-200 border-b-2"
+                      :class="payloadTab === 'text'
+                        ? 'bg-emerald-500/8 text-emerald-400 border-emerald-500'
+                        : 'text-gray-600 border-transparent hover:text-gray-400'">
+                ✎ Text
+              </button>
+              <button @click="payloadTab = 'file'"
+                      class="flex-1 py-2.5 text-xs font-bold uppercase tracking-widest transition-all duration-200 border-b-2"
+                      :class="payloadTab === 'file'
+                        ? 'bg-emerald-500/8 text-emerald-400 border-emerald-500'
+                        : 'text-gray-600 border-transparent hover:text-gray-400'">
+                📎 File
+              </button>
+            </div>
+
+            <!-- Text tab content -->
+            <div v-if="payloadTab === 'text'" class="p-3">
+              <textarea v-model="secretText"
+                        placeholder="Type your secret message here…"
+                        rows="9"
+                        class="w-full bg-gray-950 border border-gray-700 rounded-lg p-3 text-sm text-gray-200 resize-none focus:outline-none focus:border-emerald-500/50 placeholder-gray-800 font-mono leading-relaxed">
+              </textarea>
+              <div class="flex justify-between text-[10px] text-gray-700 mt-1.5">
+                <span>{{ secretTextBytes }} bytes · {{ secretText.length }} chars</span>
+                <button v-if="secretText" @click="secretText = ''"
+                        class="text-gray-700 hover:text-red-400 transition-colors">✕ Clear</button>
+              </div>
+            </div>
+
+            <!-- File tab content -->
+            <div v-if="payloadTab === 'file'" class="p-3">
+              <div @click="$refs.payloadFile.click()"
+                   class="border-2 border-dashed border-gray-700 hover:border-gray-600 rounded-lg p-6 text-center cursor-pointer transition-colors">
+                <template v-if="!secretFile">
+                  <div class="text-3xl mb-2 opacity-30">📂</div>
+                  <p class="text-gray-500 text-sm">Click to select a file</p>
+                  <p class="text-gray-700 text-xs mt-1">Max 10 MB — any format</p>
+                </template>
+                <template v-else>
+                  <div class="text-left space-y-1">
+                    <p class="text-emerald-400 text-sm font-bold truncate">📄 {{ secretFile.name }}</p>
+                    <p class="text-gray-500 text-xs">{{ secretFile.mime }}</p>
+                    <p class="text-gray-600 text-xs">{{ fmtBytes(secretFile.size) }}</p>
+                    <button @click.stop="secretFile = null"
+                            class="mt-2 text-[10px] text-gray-600 hover:text-red-400 transition-colors uppercase tracking-wider">
+                      ✕ Remove
+                    </button>
+                  </div>
+                </template>
+              </div>
+              <input ref="payloadFile" type="file" class="hidden" @change="onPayloadFileChange" />
+            </div>
+          </div>
+        </template>
+
+        <!-- ─── DECODE: Result panel ─── -->
+        <template v-else>
+          <div class="flex items-center gap-2 text-[10px] text-gray-600 uppercase tracking-[0.18em]">
+            <span class="text-cyan-600">◈</span>
+            EXTRACTED PAYLOAD
+          </div>
+
+          <div class="bg-gray-900 border border-gray-800 rounded-xl min-h-64 flex flex-col overflow-hidden">
+
+            <!-- Idle -->
+            <div v-if="!decodeResult && !isProcessing"
+                 class="flex-1 flex flex-col items-center justify-center text-center p-8 text-gray-800 select-none">
+              <div class="text-5xl mb-3 opacity-20">🔍</div>
+              <p class="text-sm text-gray-700">Load a stego image, enter the</p>
+              <p class="text-sm text-gray-700">password, then click DECODE.</p>
+            </div>
+
+            <!-- Processing state -->
+            <div v-if="isProcessing && !decodeResult"
+                 class="flex-1 flex flex-col items-center justify-center p-8 text-center">
+              <div class="text-4xl mb-3 proc-pulse">⚙</div>
+              <p class="text-cyan-400 text-sm font-bold proc-pulse">{{ processingStatus }}</p>
+            </div>
+
+            <!-- Text result -->
+            <div v-if="decodeResult && decodeResult.type === 'text'" class="flex flex-col flex-1">
+              <div class="flex items-center justify-between px-3 py-2.5 border-b border-gray-800 flex-shrink-0">
+                <span class="text-xs text-cyan-400 font-bold tracking-wider">✓ SECRET TEXT EXTRACTED</span>
+                <button @click="copyToClipboard(decodeResult.text)"
+                        class="text-[10px] text-gray-600 hover:text-cyan-400 transition-colors px-2 py-1 border border-gray-700 rounded hover:border-cyan-500/40">
+                  {{ copied ? '✓ Copied!' : '⎘ Copy' }}
+                </button>
+              </div>
+              <textarea readonly :value="decodeResult.text"
+                        class="flex-1 w-full bg-transparent p-3 text-sm text-cyan-100 font-mono resize-none focus:outline-none min-h-48 leading-relaxed">
+              </textarea>
+            </div>
+
+            <!-- File result -->
+            <div v-if="decodeResult && decodeResult.type === 'file'"
+                 class="flex-1 flex flex-col items-center justify-center p-6 text-center gap-4">
+              <div class="text-5xl">📥</div>
+              <p class="text-cyan-400 font-bold text-sm tracking-wider">FILE EXTRACTED</p>
+              <div class="bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 text-left w-full">
+                <p class="text-gray-200 font-bold text-sm truncate">{{ decodeResult.meta.filename }}</p>
+                <p class="text-gray-600 text-xs mt-1">{{ decodeResult.meta.mime }}</p>
+                <p class="text-gray-700 text-xs">{{ fmtBytes(decodeResult.data.length) }}</p>
+              </div>
+              <button @click="downloadDecoded()"
+                      class="w-full py-2.5 bg-cyan-500/10 border border-cyan-500/30 text-cyan-400 rounded-lg text-xs font-bold uppercase tracking-wider hover:bg-cyan-500/20 transition-colors">
+                ⬇ Download Again
+              </button>
+            </div>
+
+          </div>
+        </template>
+
+      </div>
+      <!-- ══ END RIGHT ══ -->
+
+    </div><!-- end grid -->
+
+    <!-- ╔══════════════════ PASSWORD + ACTION ═══════════════════════╗ -->
+    <div class="mt-4 space-y-3">
+
+      <!-- Password input -->
+      <div class="bg-gray-900 border border-gray-800 rounded-xl p-4">
+        <label class="text-[10px] text-gray-600 uppercase tracking-[0.18em] block mb-2">
+          🔑 Master Password
+        </label>
+        <div class="relative">
+          <input :type="showPwd ? 'text' : 'password'"
+                 v-model="password"
+                 placeholder="Enter encryption / decryption password…"
+                 autocomplete="off"
+                 class="w-full bg-gray-950 border border-gray-700 rounded-lg px-4 py-3 pr-14 text-sm text-gray-200 font-mono focus:outline-none focus:border-emerald-500/50 placeholder-gray-800"
+                 @keyup.enter="mode === 'encode' ? handleEncode() : handleDecode()" />
+          <button @click="showPwd = !showPwd"
+                  class="absolute right-3 top-1/2 -translate-y-1/2 text-gray-600 hover:text-gray-400 transition-colors text-base leading-none">
+            {{ showPwd ? '🙈' : '👁' }}
+          </button>
+        </div>
+        <!-- Strength meter -->
+        <div class="flex gap-1 mt-2.5">
+          <div v-for="i in 5" :key="i"
+               class="h-0.5 flex-1 rounded-full transition-all duration-300"
+               :class="pwdStrength >= i ? pwdStrengthColor : 'bg-gray-800'">
+          </div>
+        </div>
+        <p class="text-[10px] mt-1 transition-colors"
+           :class="pwdStrength === 0 ? 'text-gray-800' : pwdStrength < 3 ? 'text-red-400' : pwdStrength < 5 ? 'text-yellow-400' : 'text-emerald-400'">
+          {{ pwdStrengthLabel }}
+        </p>
+      </div>
+
+      <!-- Progress bar -->
+      <transition name="toast">
+        <div v-if="isProcessing" class="bg-gray-900 border border-gray-800 rounded-xl p-3">
+          <div class="flex justify-between text-[10px] text-gray-600 mb-2 uppercase tracking-wider">
+            <span class="proc-pulse">{{ processingStatus }}</span>
+            <span>{{ progress }}%</span>
+          </div>
+          <div class="h-1.5 bg-gray-800 rounded-full overflow-hidden">
+            <div class="h-full rounded-full cap-bar proc-pulse"
+                 :class="mode === 'encode' ? 'bg-emerald-500' : 'bg-cyan-500'"
+                 :style="{ width: progress + '%' }">
+            </div>
+          </div>
+        </div>
+      </transition>
+
+      <!-- Action row -->
+      <div class="flex gap-3">
+        <!-- Main CTA -->
+        <button @click="mode === 'encode' ? handleEncode() : handleDecode()"
+                :disabled="isProcessing"
+                class="flex-1 py-4 rounded-xl font-bold tracking-[0.15em] uppercase text-sm transition-all duration-200 flex items-center justify-center gap-2 disabled:opacity-40 disabled:cursor-not-allowed shadow-lg"
+                :class="mode === 'encode'
+                  ? 'bg-gradient-to-r from-emerald-500 to-emerald-600 hover:from-emerald-400 hover:to-emerald-500 text-gray-950 shadow-emerald-500/20'
+                  : 'bg-gradient-to-r from-cyan-500 to-cyan-600 hover:from-cyan-400 hover:to-cyan-500 text-gray-950 shadow-cyan-500/20'">
+          <span :class="isProcessing ? 'animate-spin inline-block' : ''">
+            {{ isProcessing ? '⟳' : (mode === 'encode' ? '⬆' : '⬇') }}
+          </span>
+          {{ isProcessing ? 'Processing…' : (mode === 'encode' ? 'ENCODE & INJECT' : 'EXTRACT & DECODE') }}
+        </button>
+
+        <!-- Reset -->
+        <button @click="resetAll" :disabled="isProcessing"
+                title="Reset everything"
+                class="px-5 py-4 rounded-xl border border-gray-800 text-gray-700 hover:border-red-500/40 hover:text-red-400 transition-all duration-200 text-sm font-bold disabled:opacity-30">
+          ✕
+        </button>
+      </div>
+    </div><!-- end password+action -->
+  </main>
+
+  <!-- ╔══════════════════ FOOTER ══════════════════════════════════════╗ -->
+  <footer class="border-t border-gray-900/80 px-6 py-3 text-center text-[10px] text-gray-800 tracking-widest">
+    STEALTH-LSB VAULT · 100% LOCAL · NO DATA LEAVES YOUR BROWSER
+    · AES-256-GCM · PBKDF2 {{ PBKDF2_ITER.toLocaleString() }} ITER
+  </footer>
+
+  <!-- ╔══════════════════ TOAST CONTAINER ═════════════════════════════╗ -->
+  <div class="fixed top-4 right-4 z-50 flex flex-col gap-2 w-80 max-w-[calc(100vw-2rem)]">
+    <transition-group name="toast">
+      <div v-for="t in toasts" :key="t.id"
+           class="flex items-start gap-3 rounded-xl border px-4 py-3 shadow-2xl text-sm backdrop-blur-sm"
+           :class="{
+             'bg-emerald-500/10 border-emerald-500/30 text-emerald-300': t.type === 'success',
+             'bg-red-500/10 border-red-500/30 text-red-300': t.type === 'error',
+             'bg-yellow-500/10 border-yellow-500/30 text-yellow-300': t.type === 'warning',
+             'bg-gray-800/90 border-gray-700 text-gray-300': t.type === 'info',
+           }">
+        <span class="text-base flex-shrink-0 mt-0.5">{{ t.icon }}</span>
+        <span class="flex-1 leading-snug text-xs">{{ t.msg }}</span>
+        <button @click="dismissToast(t.id)"
+                class="opacity-40 hover:opacity-100 transition-opacity flex-shrink-0 mt-0.5 text-xs">✕</button>
+      </div>
+    </transition-group>
+  </div>
+
+</div><!-- #app -->
+
+
+<!-- ╔══════════════════════════════════════════════════════════════════╗
+     ║            INLINE WEB WORKER — LSB PIXEL ENGINE                ║
+     ║  Runs entirely off the main thread.                             ║
+     ║  Receives: { cmd:'encode'|'decode', pixels, payload, byteCount }║
+     ║  Sends:    { type:'progress'|'done'|'error', ... }             ║
+     ╚══════════════════════════════════════════════════════════════════╝ -->
+<script id="worker-source" type="text/plain">
+'use strict';
+
+/**
+ * LSB ENCODING
+ * ─────────────────────────────────────────────────────────────────────
+ * For each bit i of the payload:
+ *   pixel   = Math.floor(i / 3)          ← which pixel (RGBA index = pixel*4)
+ *   channel = i % 3                       ← 0=R, 1=G, 2=B  (Alpha always skipped)
+ *   bytePos = Math.floor(i / 8)           ← which byte of payload
+ *   bitPos  = 7 - (i % 8)                 ← which bit (MSB first)
+ * Then: data[pixel*4 + channel] = (data[pixel*4 + channel] & 0xFE) | bit
+ *
+ * @param {Uint8ClampedArray} pixels   Raw RGBA pixel data (this is a copy — safe to modify)
+ * @param {Uint8Array}        payload  Bytes to embed
+ * @returns {Uint8ClampedArray}        Modified pixel data
+ */
+function encodeLSB(pixels, payload) {
+  const totalBits  = payload.length * 8;
+  const maxBits    = Math.floor(pixels.length / 4) * 3; // 3 usable channels per pixel
+
+  if (totalBits > maxBits) {
+    throw new Error(
+      'Payload (' + payload.length + ' B) exceeds image capacity (' +
+      Math.floor(maxBits / 8) + ' B).'
+    );
+  }
+
+  const REPORT_STEP = Math.max(1, Math.floor(totalBits / 400));
+
+  for (let i = 0; i < totalBits; i++) {
+    const pixel   = Math.floor(i / 3);
+    const channel = i % 3;                      // 0=R, 1=G, 2=B
+    const bytePos = Math.floor(i / 8);
+    const bitPos  = 7 - (i % 8);                // MSB first
+    const bit     = (payload[bytePos] >> bitPos) & 1;
+
+    const idx    = pixel * 4 + channel;
+    pixels[idx]  = (pixels[idx] & 0xFE) | bit;  // clear LSB, then set it
+
+    if (i % REPORT_STEP === 0) {
+      self.postMessage({ type: 'progress', pct: Math.round((i / totalBits) * 100) });
+    }
+  }
+
+  self.postMessage({ type: 'progress', pct: 100 });
+  return pixels; // modified in-place (it was already a copy)
+}
+
+/**
+ * LSB DECODING
+ * Extracts exactly byteCount bytes from the pixel LSBs.
+ *
+ * @param {Uint8ClampedArray} pixels     Raw RGBA pixel data
+ * @param {number}            byteCount  Number of bytes to extract
+ * @returns {Uint8Array}
+ */
+function decodeLSB(pixels, byteCount) {
+  const result     = new Uint8Array(byteCount);
+  const totalBits  = byteCount * 8;
+  const REPORT_STEP = Math.max(1, Math.floor(totalBits / 400));
+
+  for (let i = 0; i < totalBits; i++) {
+    const pixel   = Math.floor(i / 3);
+    const channel = i % 3;
+    const bytePos = Math.floor(i / 8);
+    const bitPos  = 7 - (i % 8);                // MSB first (mirrors encoding)
+
+    const bit         = pixels[pixel * 4 + channel] & 1;
+    result[bytePos]  |= (bit << bitPos);
+
+    if (i % REPORT_STEP === 0) {
+      self.postMessage({ type: 'progress', pct: Math.round((i / totalBits) * 100) });
+    }
+  }
+
+  self.postMessage({ type: 'progress', pct: 100 });
+  return result;
+}
+
+/* ── Message dispatcher ─────────────────────────────────────────────── */
+self.onmessage = function(e) {
+  const { cmd, pixels, payload, byteCount } = e.data;
+  try {
+    if (cmd === 'encode') {
+      const result = encodeLSB(pixels, payload);
+      // Transfer the buffer back to avoid copy cost
+      self.postMessage({ type: 'done', cmd: 'encode', pixels: result }, [result.buffer]);
+
+    } else if (cmd === 'decode') {
+      const result = decodeLSB(pixels, byteCount);
+      self.postMessage({ type: 'done', cmd: 'decode', bytes: result }, [result.buffer]);
+
+    } else {
+      self.postMessage({ type: 'error', message: 'Unknown worker command: ' + cmd });
+    }
+  } catch (err) {
+    self.postMessage({ type: 'error', message: err.message });
+  }
+};
+</script>
+
+
+<!-- ╔══════════════════════════════════════════════════════════════════╗
+     ║              MAIN APPLICATION SCRIPT                           ║
+     ╚══════════════════════════════════════════════════════════════════╝ -->
+<script>
+'use strict';
+
+/* ══════════════════════════════════════════════════════════════════════
+   SECTION 1 — CONSTANTS & BINARY FORMAT
+   ══════════════════════════════════════════════════════════════════════
+   ┌─────────────────────────────────────────────────────────────────────┐
+   │              EMBEDDED PAYLOAD BINARY STRUCTURE                     │
+   ├────────┬────────┬──────────────────────────────────────────────────┤
+   │ Offset │ Length │ Description                                      │
+   ├────────┼────────┼──────────────────────────────────────────────────┤
+   │   0    │   4    │ Magic : "SLSB" (0x53 0x4C 0x53 0x42)            │
+   │   4    │   1    │ Version : 0x01                                   │
+   │   5    │   1    │ Type : 0x00 = text | 0x01 = file                │
+   │   6    │  16    │ PBKDF2 Salt (random)                             │
+   │  22    │  12    │ AES-GCM IV (random)                              │
+   │  34    │   4    │ Encrypted data length — uint32 big-endian        │
+   │  38    │   N    │ AES-GCM ciphertext (includes 16-byte auth tag)   │
+   └────────┴────────┴──────────────────────────────────────────────────┘
+   TOTAL FIXED HEADER: 38 bytes
+
+   DECRYPTED INNER STRUCTURE:
+   ┌────────┬────────┬──────────────────────────────────────────────────┐
+   │   0    │   4    │ Metadata JSON byte-length — uint32 BE            │
+   │   4    │   M    │ Metadata JSON (UTF-8)                            │
+   │  4+M   │   R    │ Raw payload  (UTF-8 text   OR   binary file)     │
+   └────────┴────────┴──────────────────────────────────────────────────┘
+   ════════════════════════════════════════════════════════════════════ */
+
+const MAGIC        = new Uint8Array([0x53, 0x4C, 0x53, 0x42]); // 'SLSB'
+const VERSION      = 0x01;
+const TYPE_TEXT    = 0x00;
+const TYPE_FILE    = 0x01;
+const SALT_LEN     = 16;  // PBKDF2 salt
+const IV_LEN       = 12;  // AES-GCM IV
+const HEADER_LEN   = 4 + 1 + 1 + SALT_LEN + IV_LEN + 4; // = 38 bytes
+const PBKDF2_ITER  = 120000; // iterations (OWASP 2023 recommendation for SHA-256)
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   SECTION 2 — LOW-LEVEL BINARY HELPERS
+   ══════════════════════════════════════════════════════════════════════ */
+
+/** Reads a big-endian uint32 from a Uint8Array at byte offset `off` */
+function readU32BE(buf, off) {
+  return ((buf[off] << 24) | (buf[off+1] << 16) | (buf[off+2] << 8) | buf[off+3]) >>> 0;
+}
+
+/** Writes a big-endian uint32 via a DataView */
+function writeU32BE(dv, off, val) {
+  dv.setUint32(off, val, false); // false = big-endian
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   SECTION 3 — WEB CRYPTO UTILITIES
+   ══════════════════════════════════════════════════════════════════════ */
+
+/**
+ * Derives an AES-256-GCM CryptoKey from a plaintext password using PBKDF2-SHA256.
+ *
+ * @param {string}     password
+ * @param {Uint8Array} salt      16-byte random salt
+ * @returns {Promise<CryptoKey>}
+ */
+async function deriveKey(password, salt) {
+  const enc        = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey(
+    'raw',
+    enc.encode(password),
+    'PBKDF2',
+    false,
+    ['deriveKey']
+  );
+  return crypto.subtle.deriveKey(
+    { name: 'PBKDF2', salt, iterations: PBKDF2_ITER, hash: 'SHA-256' },
+    keyMaterial,
+    { name: 'AES-GCM', length: 256 },
+    false,        // non-extractable
+    ['encrypt', 'decrypt']
+  );
+}
+
+/**
+ * Builds the complete binary blob to embed inside an image via LSB.
+ *
+ * @param {'text'|'file'} payloadType
+ * @param {Uint8Array}    rawData      Text bytes  OR  raw file bytes
+ * @param {Object}        meta         e.g. { type:'text' } or { type:'file', filename, mime }
+ * @param {string}        password
+ * @returns {Promise<Uint8Array>}
+ */
+async function buildEmbeddablePayload(payloadType, rawData, meta, password) {
+  const enc     = new TextEncoder();
+  const metaBuf = enc.encode(JSON.stringify(meta));
+
+  // Build plaintext inner block: [u32 metaLen][metaJSON][rawData]
+  const inner   = new Uint8Array(4 + metaBuf.length + rawData.length);
+  const innerDV = new DataView(inner.buffer);
+  writeU32BE(innerDV, 0, metaBuf.length);
+  inner.set(metaBuf,  4);
+  inner.set(rawData,  4 + metaBuf.length);
+
+  // Generate fresh random salt + IV for this encryption
+  const salt = crypto.getRandomValues(new Uint8Array(SALT_LEN));
+  const iv   = crypto.getRandomValues(new Uint8Array(IV_LEN));
+
+  // Encrypt (AES-GCM appends a 16-byte auth tag automatically)
+  const key     = await deriveKey(password, salt);
+  const encBuf  = await crypto.subtle.encrypt({ name: 'AES-GCM', iv }, key, inner);
+  const encData = new Uint8Array(encBuf);
+
+  // Assemble final binary blob
+  const out   = new Uint8Array(HEADER_LEN + encData.length);
+  const outDV = new DataView(out.buffer);
+  let   off   = 0;
+
+  out.set(MAGIC, off);                           off += 4;
+  out[off++] = VERSION;
+  out[off++] = payloadType === 'file' ? TYPE_FILE : TYPE_TEXT;
+  out.set(salt, off);                            off += SALT_LEN;
+  out.set(iv,   off);                            off += IV_LEN;
+  writeU32BE(outDV, off, encData.length);        off += 4;
+  out.set(encData, off);
+
+  return out;
+}
+
+/**
+ * Parses and decrypts a binary blob previously extracted from an image.
+ * Throws with a descriptive message on any failure.
+ *
+ * @param {Uint8Array} bytes     Raw bytes extracted from image LSBs
+ * @param {string}     password
+ * @returns {Promise<{ type:'text'|'file', meta:Object, data:Uint8Array }>}
+ */
+async function parseEmbeddablePayload(bytes, password) {
+  const dec = new TextDecoder();
+  let   off = 0;
+
+  // 1. Magic check
+  for (let i = 0; i < 4; i++) {
+    if (bytes[off + i] !== MAGIC[i]) {
+      throw new Error(
+        'No valid SLSB payload found in this image. ' +
+        'Either this image has no hidden data, or it was re-compressed after encoding.'
+      );
+    }
+  }
+  off += 4;
+
+  const version  = bytes[off++]; // reserved for future use
+  const typeFlag = bytes[off++]; // TYPE_TEXT or TYPE_FILE
+  const salt     = bytes.slice(off, off + SALT_LEN); off += SALT_LEN;
+  const iv       = bytes.slice(off, off + IV_LEN);   off += IV_LEN;
+  const encLen   = readU32BE(bytes, off);             off += 4;
+  const encData  = bytes.slice(off, off + encLen);
+
+  // 2. Derive key + decrypt
+  //    AES-GCM will throw a DOMException if auth tag fails (wrong password / corrupt data)
+  let decBuf;
+  try {
+    const key = await deriveKey(password, salt);
+    decBuf    = await crypto.subtle.decrypt({ name: 'AES-GCM', iv }, key, encData);
+  } catch {
+    throw new Error('Decryption failed — incorrect password, or data is corrupted.');
+  }
+
+  // 3. Parse inner structure
+  const inner   = new Uint8Array(decBuf);
+  let   iOff    = 0;
+  const metaLen = readU32BE(inner, iOff); iOff += 4;
+  const metaStr = dec.decode(inner.slice(iOff, iOff + metaLen)); iOff += metaLen;
+  const meta    = JSON.parse(metaStr);
+  const data    = inner.slice(iOff); // remaining bytes = the actual payload
+
+  return {
+    type: typeFlag === TYPE_FILE ? 'file' : 'text',
+    meta,
+    data
+  };
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   SECTION 4 — WEB WORKER FACTORY
+   ══════════════════════════════════════════════════════════════════════ */
+
+/** Creates a disposable inline Web Worker from the <script id="worker-source"> tag */
+function spawnWorker() {
+  const src  = document.getElementById('worker-source').textContent;
+  const blob = new Blob([src], { type: 'application/javascript' });
+  const url  = URL.createObjectURL(blob);
+  const w    = new Worker(url);
+  URL.revokeObjectURL(url); // URL can be GC'd once the Worker has started
+  return w;
+}
+
+/**
+ * Spawns a Worker, sends it a command, resolves on 'done', rejects on 'error'.
+ * Calls onProgress(pct) for each progress event.
+ *
+ * @param {'encode'|'decode'} cmd
+ * @param {Object}            msgData        Includes a `transferables` array key
+ * @param {Function}          onProgress
+ * @returns {Promise<Object>}
+ */
+function runWorker(cmd, msgData, onProgress) {
+  return new Promise((resolve, reject) => {
+    const worker = spawnWorker();
+    const { transferables = [], ...rest } = msgData;
+
+    worker.onmessage = ({ data }) => {
+      if (data.type === 'progress') {
+        onProgress?.(data.pct);
+      } else if (data.type === 'done') {
+        worker.terminate();
+        resolve(data);
+      } else if (data.type === 'error') {
+        worker.terminate();
+        reject(new Error(data.message));
+      }
+    };
+
+    worker.onerror = (err) => {
+      worker.terminate();
+      reject(new Error('Worker error: ' + (err.message || 'Unknown')));
+    };
+
+    worker.postMessage({ cmd, ...rest }, transferables);
+  });
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   SECTION 5 — MISC UTILITIES
+   ══════════════════════════════════════════════════════════════════════ */
+
+/** Human-readable byte size */
+function fmtBytes(n) {
+  if (!n || n < 1) return '0 B';
+  if (n < 1024)    return n + ' B';
+  if (n < 1048576) return (n / 1024).toFixed(1) + ' KB';
+  return (n / 1048576).toFixed(2) + ' MB';
+}
+
+/**
+ * Reads an image File and renders it onto an offscreen <canvas>.
+ * Returns { canvas, ctx, width, height, src (dataURL) }.
+ */
+function loadImageToCanvas(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error('FileReader failed'));
+    reader.onload  = (ev) => {
+      const img    = new Image();
+      img.onerror  = () => reject(new Error('Image decode failed — unsupported format?'));
+      img.onload   = () => {
+        const canvas = document.createElement('canvas');
+        canvas.width  = img.naturalWidth;
+        canvas.height = img.naturalHeight;
+        const ctx = canvas.getContext('2d', { willReadFrequently: true });
+        ctx.drawImage(img, 0, 0);
+        resolve({ canvas, ctx, width: img.naturalWidth, height: img.naturalHeight, src: ev.target.result });
+      };
+      img.src = ev.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+
+/* ══════════════════════════════════════════════════════════════════════
+   SECTION 6 — VUE 3 APPLICATION
+   ══════════════════════════════════════════════════════════════════════ */
+
+const { createApp, ref, computed } = Vue;
+
+createApp({
+  setup() {
+
+    /* ── Reactive State ───────────────────────────────────────────── */
+    const mode             = ref('encode');    // 'encode' | 'decode'
+    const payloadTab       = ref('text');      // 'text'   | 'file'
+    const isDragOver       = ref(false);
+
+    /**
+     * imgInfo: null | {
+     *   src: string (dataURL),  width, height, name, fileSize,
+     *   isPng: boolean,  imageData: ImageData
+     * }
+     */
+    const imgInfo          = ref(null);
+
+    const secretText       = ref('');
+    /** secretFile: null | { name, mime, size, data: ArrayBuffer } */
+    const secretFile       = ref(null);
+
+    const password         = ref('');
+    const showPwd          = ref(false);
+    const isProcessing     = ref(false);
+    const progress         = ref(0);
+    const processingStatus = ref('');
+
+    /**
+     * decodeResult: null | { type:'text', text } | { type:'file', meta, data }
+     */
+    const decodeResult     = ref(null);
+    const toasts           = ref([]);
+    const copied           = ref(false);
+
+
+    /* ── Computed Properties ──────────────────────────────────────── */
+
+    /** Maximum bytes that fit in the current image (3 channels × pixels / 8) */
+    const capacityBytes = computed(() => {
+      if (!imgInfo.value) return 0;
+      return Math.floor((imgInfo.value.width * imgInfo.value.height * 3) / 8);
+    });
+
+    /** UTF-8 byte size of the current secret text */
+    const secretTextBytes = computed(() =>
+      secretText.value ? new TextEncoder().encode(secretText.value).length : 0
+    );
+
+    /** Raw payload bytes (before encryption) */
+    const rawPayloadSize = computed(() => {
+      if (mode.value !== 'encode') return 0;
+      return payloadTab.value === 'text'
+        ? secretTextBytes.value
+        : (secretFile.value?.size ?? 0);
+    });
+
+    /**
+     * Realistic estimate of total embedded bytes:
+     *   HEADER + AES-GCM overhead (16 auth tag) + meta JSON + raw payload
+     */
+    const estimatedSize = computed(() => {
+      if (rawPayloadSize.value === 0) return 0;
+      const metaEstimate = (payloadTab.value === 'file' && secretFile.value)
+        ? JSON.stringify({ type:'file', filename: secretFile.value.name, mime: secretFile.value.mime }).length
+        : 20;
+      return HEADER_LEN + 4 + metaEstimate + rawPayloadSize.value + 16;
+    });
+
+    const capacityPct      = computed(() =>
+      capacityBytes.value ? Math.round((estimatedSize.value / capacityBytes.value) * 100) : 0
+    );
+
+    const capacityOverflow = computed(() => capacityPct.value > 100);
+
+    /** 0–5 password strength score */
+    const pwdStrength = computed(() => {
+      const p = password.value;
+      if (!p) return 0;
+      let s = 0;
+      if (p.length >= 8)              s++;
+      if (p.length >= 14)             s++;
+      if (/[A-Z]/.test(p))            s++;
+      if (/[0-9]/.test(p))            s++;
+      if (/[^A-Za-z0-9]/.test(p))     s++;
+      return s;
+    });
+
+    const pwdStrengthColor = computed(() => {
+      const s = pwdStrength.value;
+      if (s <= 1) return 'bg-red-500';
+      if (s <= 3) return 'bg-yellow-500';
+      return 'bg-emerald-500';
+    });
+
+    const pwdStrengthLabel = computed(() => {
+      if (!password.value) return '';
+      return ['', 'Very Weak', 'Weak', 'Moderate', 'Strong', 'Very Strong'][pwdStrength.value] ?? 'Very Strong';
+    });
+
+
+    /* ── Toast System ─────────────────────────────────────────────── */
+
+    const TOAST_ICONS = { success:'✓', error:'✗', warning:'⚠', info:'ℹ' };
+
+    function toast(msg, type = 'info', duration = 4500) {
+      const id = Date.now() + Math.random();
+      toasts.value.push({ id, msg, type, icon: TOAST_ICONS[type] ?? 'ℹ' });
+      setTimeout(() => dismissToast(id), duration);
+    }
+
+    function dismissToast(id) {
+      toasts.value = toasts.value.filter(t => t.id !== id);
+    }
+
+
+    /* ── Image Loading ────────────────────────────────────────────── */
+
+    async function loadImageFile(file) {
+      if (!file?.type.startsWith('image/')) {
+        toast('Please provide a valid image file (PNG, JPG, WEBP…)', 'error');
+        return;
+      }
+      try {
+        const loaded = await loadImageToCanvas(file);
+        imgInfo.value = {
+          src:       loaded.src,
+          width:     loaded.width,
+          height:    loaded.height,
+          name:      file.name,
+          fileSize:  file.size,
+          isPng:     file.type === 'image/png',
+          imageData: loaded.ctx.getImageData(0, 0, loaded.width, loaded.height)
+        };
+        decodeResult.value = null;
+        const cap = Math.floor(loaded.width * loaded.height * 3 / 8);
+        toast(
+          `Loaded: ${loaded.width}×${loaded.height} · Capacity: ${fmtBytes(cap)}`,
+          'success'
+        );
+      } catch (err) {
+        toast('Image load failed: ' + err.message, 'error');
+      }
+    }
+
+    function onImageDrop(e) {
+      isDragOver.value = false;
+      const file = e.dataTransfer.files[0];
+      if (file) loadImageFile(file);
+    }
+
+    function onImageInputChange(e) {
+      const file = e.target.files[0];
+      if (file) loadImageFile(file);
+      e.target.value = ''; // allow re-selecting the same file
+    }
+
+    function onPayloadFileChange(e) {
+      const file = e.target.files[0];
+      if (!file) return;
+      if (file.size > 10 * 1024 * 1024) {
+        toast('File too large — maximum is 10 MB.', 'error');
+        e.target.value = '';
+        return;
+      }
+      const reader = new FileReader();
+      reader.onload = (ev) => {
+        secretFile.value = {
+          name: file.name,
+          mime: file.type || 'application/octet-stream',
+          size: file.size,
+          data: ev.target.result  // ArrayBuffer
+        };
+      };
+      reader.readAsArrayBuffer(file);
+      e.target.value = '';
+    }
+
+
+    /* ── ENCODE ───────────────────────────────────────────────────── */
+
+    async function handleEncode() {
+      // Input validation
+      if (!imgInfo.value)         { toast('Load a cover image first.',            'error'); return; }
+      if (!password.value.trim()) { toast('A password is required.',              'error'); return; }
+      if (capacityOverflow.value) { toast('Payload exceeds image capacity. Use a larger image or reduce payload size.', 'error'); return; }
+
+      let rawData, meta;
+
+      if (payloadTab.value === 'text') {
+        if (!secretText.value.trim())  { toast('Secret text is empty.',           'error'); return; }
+        rawData = new TextEncoder().encode(secretText.value);
+        meta    = { type: 'text' };
+      } else {
+        if (!secretFile.value)         { toast('No secret file selected.',        'error'); return; }
+        rawData = new Uint8Array(secretFile.value.data);
+        meta    = { type: 'file', filename: secretFile.value.name, mime: secretFile.value.mime };
+      }
+
+      isProcessing.value     = true;
+      progress.value         = 0;
+      processingStatus.value = 'Encrypting payload (AES-256-GCM)…';
+
+      try {
+        // ── Step 1: Build encrypted binary blob ──────────────────────
+        const embeddable = await buildEmbeddablePayload(payloadTab.value, rawData, meta, password.value);
+
+        // Final hard capacity check (with actual encrypted size)
+        if (embeddable.length > capacityBytes.value) {
+          toast(
+            `Payload too large after encryption: ${fmtBytes(embeddable.length)} needed, ` +
+            `image fits ${fmtBytes(capacityBytes.value)}.`,
+            'error'
+          );
+          isProcessing.value = false;
+          return;
+        }
+
+        processingStatus.value = `Injecting ${fmtBytes(embeddable.length)} into ${imgInfo.value.width}×${imgInfo.value.height} pixels…`;
+
+        // ── Step 2: LSB injection (Web Worker) ───────────────────────
+        // Copy pixel data — we transfer the buffer to the worker so it never blocks
+        const pixelsCopy = new Uint8ClampedArray(imgInfo.value.imageData.data);
+
+        const workerResult = await runWorker(
+          'encode',
+          {
+            pixels:        pixelsCopy,
+            payload:       embeddable,
+            transferables: [pixelsCopy.buffer, embeddable.buffer]
+          },
+          (pct) => { progress.value = pct; }
+        );
+
+        // ── Step 3: Render to canvas and export PNG ──────────────────
+        processingStatus.value = 'Exporting lossless PNG…';
+        const { width, height } = imgInfo.value;
+        const outCanvas = document.createElement('canvas');
+        outCanvas.width  = width;
+        outCanvas.height = height;
+        outCanvas.getContext('2d').putImageData(
+          new ImageData(workerResult.pixels, width, height),
+          0, 0
+        );
+
+        // Force lossless PNG download — any other format would destroy LSB data
+        outCanvas.toBlob((blob) => {
+          const url   = URL.createObjectURL(blob);
+          const link  = document.createElement('a');
+          link.href     = url;
+          link.download = imgInfo.value.name.replace(/\.[^.]+$/, '') + '_steg.png';
+          document.body.appendChild(link);
+          link.click();
+          document.body.removeChild(link);
+          URL.revokeObjectURL(url);
+          toast('✓ Stego image downloaded as PNG!', 'success', 6000);
+          isProcessing.value = false;
+          progress.value     = 100;
+          setTimeout(() => { progress.value = 0; }, 1000);
+        }, 'image/png');
+
+      } catch (err) {
+        toast('Encode error: ' + err.message, 'error');
+        isProcessing.value = false;
+        progress.value     = 0;
+      }
+    }
+
+
+    /* ── DECODE ───────────────────────────────────────────────────── */
+
+    async function handleDecode() {
+      if (!imgInfo.value)         { toast('Load a stego image first.',  'error'); return; }
+      if (!password.value.trim()) { toast('A password is required.',    'error'); return; }
+
+      isProcessing.value     = true;
+      progress.value         = 0;
+      decodeResult.value     = null;
+      processingStatus.value = 'Extracting header bytes…';
+
+      try {
+        const { imageData, width, height } = imgInfo.value;
+
+        /* ── PASS 1: Extract only the 38-byte fixed header ─────────────
+           We need to read the header first to learn the encrypted data length.
+           We transfer a fresh copy to avoid detaching the stored ImageData.   */
+        const pixPass1 = new Uint8ClampedArray(imageData.data); // copy
+        const pass1    = await runWorker(
+          'decode',
+          { pixels: pixPass1, byteCount: HEADER_LEN, transferables: [pixPass1.buffer] },
+          (pct) => { progress.value = Math.round(pct * 0.15); }
+        );
+
+        // Validate magic signature
+        const hdr = pass1.bytes;
+        for (let i = 0; i < 4; i++) {
+          if (hdr[i] !== MAGIC[i]) {
+            throw new Error(
+              'No valid SLSB signature found.\n' +
+              'This image has no hidden data, or was re-encoded with a lossy format (e.g. JPEG) after injection.'
+            );
+          }
+        }
+
+        // Read encrypted data length from the header
+        const encLen       = readU32BE(hdr, 4 + 1 + 1 + SALT_LEN + IV_LEN); // offset 34
+        const totalExtract = HEADER_LEN + encLen;
+
+        if (totalExtract > capacityBytes.value) {
+          throw new Error('Claimed payload size exceeds image capacity — image may be corrupted.');
+        }
+
+        processingStatus.value = `Extracting ${fmtBytes(totalExtract)} of payload…`;
+
+        /* ── PASS 2: Extract the full payload (header + ciphertext) ─── */
+        const pixPass2 = new Uint8ClampedArray(imageData.data); // fresh copy
+        const pass2    = await runWorker(
+          'decode',
+          { pixels: pixPass2, byteCount: totalExtract, transferables: [pixPass2.buffer] },
+          (pct) => { progress.value = 15 + Math.round(pct * 0.70); }
+        );
+
+        /* ── Decrypt & parse ─────────────────────────────────────────── */
+        processingStatus.value = 'Decrypting (AES-256-GCM)…';
+        progress.value = 85;
+
+        const parsed = await parseEmbeddablePayload(pass2.bytes, password.value);
+        progress.value = 100;
+
+        if (parsed.type === 'text') {
+          decodeResult.value = { type: 'text', text: new TextDecoder().decode(parsed.data) };
+          toast('✓ Secret text extracted successfully!', 'success');
+        } else {
+          decodeResult.value = { type: 'file', meta: parsed.meta, data: parsed.data };
+          triggerFileDownload(parsed.meta.filename, parsed.meta.mime, parsed.data);
+          toast(`✓ File "${parsed.meta.filename}" extracted and downloaded!`, 'success', 6000);
+        }
+
+      } catch (err) {
+        toast('Decode error: ' + err.message, 'error', 7000);
+      } finally {
+        isProcessing.value = false;
+        setTimeout(() => { progress.value = 0; }, 1000);
+      }
+    }
+
+
+    /* ── Utility Methods ──────────────────────────────────────────── */
+
+    /** Triggers a browser download for arbitrary binary data */
+    function triggerFileDownload(filename, mime, data) {
+      const blob = new Blob([data], { type: mime });
+      const url  = URL.createObjectURL(blob);
+      const link = document.createElement('a');
+      link.href     = url;
+      link.download = filename;
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+      URL.revokeObjectURL(url);
+    }
+
+    /** Called by the "Download Again" button in decode result panel */
+    function downloadDecoded() {
+      if (decodeResult.value?.type === 'file') {
+        const { meta, data } = decodeResult.value;
+        triggerFileDownload(meta.filename, meta.mime, data);
+      }
+    }
+
+    /** Copy decoded text to clipboard */
+    async function copyToClipboard(text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        copied.value = true;
+        setTimeout(() => { copied.value = false; }, 2500);
+        toast('Copied to clipboard!', 'success', 2000);
+      } catch {
+        toast('Clipboard access denied by browser.', 'error');
+      }
+    }
+
+    /** Switches mode and clears all state */
+    function switchMode(newMode) {
+      if (newMode === mode.value) return;
+      mode.value         = newMode;
+      resetAll();
+    }
+
+    function resetAll() {
+      imgInfo.value          = null;
+      decodeResult.value     = null;
+      secretText.value       = '';
+      secretFile.value       = null;
+      password.value         = '';
+      progress.value         = 0;
+      processingStatus.value = '';
+      isDragOver.value       = false;
+    }
+
+
+    /* ── Expose to template ───────────────────────────────────────── */
+    return {
+      // state
+      mode, payloadTab, isDragOver, imgInfo,
+      secretText, secretFile,
+      password, showPwd,
+      isProcessing, progress, processingStatus,
+      decodeResult, toasts, copied,
+      // computed
+      capacityBytes, secretTextBytes, rawPayloadSize, estimatedSize,
+      capacityPct, capacityOverflow,
+      pwdStrength, pwdStrengthColor, pwdStrengthLabel,
+      // constants (needed in template footer)
+      PBKDF2_ITER,
+      // methods
+      onImageDrop, onImageInputChange, onPayloadFileChange,
+      handleEncode, handleDecode,
+      switchMode, resetAll,
+      downloadDecoded, copyToClipboard, dismissToast,
+      fmtBytes
+    };
+  }
+}).mount('#app');
+</script>
+</body>
+</html>
